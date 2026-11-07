@@ -118,6 +118,15 @@ class SecurityTests(unittest.TestCase):
         self.assertIsNone(security.decode_token(t[:-3] + "abc"))
         self.assertIsNone(security.decode_token("garbage"))
 
+    def test_default_db_url_is_writable_on_vercel(self):
+        import os
+        os.environ["VERCEL"] = "1"
+        from importlib import reload
+        import app.config as config_module
+        reload(config_module)
+        self.assertEqual(config_module._default_db_url(), "sqlite:////tmp/shareplate.db")
+        os.environ.pop("VERCEL", None)
+
 
 if __name__ == "__main__":
     unittest.main()

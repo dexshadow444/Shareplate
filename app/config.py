@@ -4,6 +4,13 @@ import os
 _DEFAULT_SECRET = "dev-only-secret-change-me-before-deploying-0123456789"
 
 
+def _default_db_url() -> str:
+    """Use a writable SQLite path on Vercel/serverless platforms; keep local repo files for desktop dev."""
+    if os.getenv("VERCEL") == "1":
+        return "sqlite:////tmp/shareplate.db"
+    return "sqlite:///./shareplate.db"
+
+
 class Settings:
     # --- security ---
     SECRET_KEY: str = os.getenv("SHAREPLATE_SECRET", _DEFAULT_SECRET)
@@ -11,7 +18,7 @@ class Settings:
     USING_DEFAULT_SECRET: bool = SECRET_KEY == _DEFAULT_SECRET
 
     # --- database (SQLite for dev; set a postgresql+psycopg://... URL for production) ---
-    DATABASE_URL: str = os.getenv("SHAREPLATE_DB", "sqlite:///./shareplate.db")
+    DATABASE_URL: str = os.getenv("SHAREPLATE_DB", _default_db_url())
 
     # --- bootstrap admin (created on first start if missing) ---
     ADMIN_EMAIL: str = os.getenv("SHAREPLATE_ADMIN_EMAIL", "admin@example.com")
