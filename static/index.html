@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SharePlate</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--bg:#faf6ee;--card:#fff;--ink:#1f2a24;--mute:#6b766f;--line:#e6dfd0;--green:#2f7d4f;--green-d:#235f3c;--amber:#d98324;--red:#b83a3a;--blue:#2d6a9f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+h1,h2,h3{margin:0 0 .5rem;line-height:1.2}
+header{background:var(--green-d);color:#fff;display:flex;align-items:center;gap:1rem;padding:.7rem 1.2rem;position:sticky;top:0;z-index:1000}
+header .brand{font-weight:800;font-size:1.25rem;letter-spacing:.2px}
+header .sp{flex:1}
+header button{background:transparent;color:#fff;border:1px solid #ffffff66;border-radius:8px;padding:.35rem .8rem;cursor:pointer}
+header button:hover{background:#ffffff22}
+main{max-width:1100px;margin:1.2rem auto;padding:0 1rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:1.1rem;margin-bottom:1rem}
+.grid{display:grid;gap:1rem}.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}.g4{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.stat{text-align:center}.stat b{display:block;font-size:1.7rem;color:var(--green-d)}.stat span{color:var(--mute);font-size:.85rem}
+label{display:block;font-size:.85rem;color:var(--mute);margin:.6rem 0 .2rem}
+input,select,textarea{width:100%;padding:.55rem .65rem;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
+input:focus,select:focus,textarea:focus{outline:2px solid #2f7d4f55;border-color:var(--green)}
+.row{display:flex;gap:.7rem}.row>*{flex:1}
+button.btn{background:var(--green);color:#fff;border:0;border-radius:9px;padding:.55rem 1rem;font:inherit;font-weight:600;cursor:pointer}
+button.btn:hover{background:var(--green-d)}button.btn.sec{background:#fff;color:var(--ink);border:1px solid var(--line)}
+button.btn.red{background:var(--red)}button.btn.sm{padding:.3rem .65rem;font-size:.85rem}
+.tabs{display:flex;gap:.4rem;margin-bottom:1rem;flex-wrap:wrap}
+.tabs button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:.4rem .95rem;cursor:pointer;font:inherit}
+.tabs button.on{background:var(--green);color:#fff;border-color:var(--green)}
+.pill{display:inline-block;font-size:.72rem;font-weight:700;padding:.1rem .55rem;border-radius:999px;background:#eee;color:#444}
+.AVAILABLE,.VERIFIED{background:#dff1e5;color:#1d6b3f}.CLAIMED,.PENDING{background:#fdeccf;color:#8a5200}
+.COLLECTED{background:#d8e8f6;color:#1f5382}.EXPIRED,.CANCELLED,.REJECTED{background:#f6dcdc;color:#8c2a2a}
+.item{border-top:1px solid var(--line);padding:.8rem 0}.item:first-child{border-top:0}
+.muted{color:var(--mute);font-size:.88rem}.err{color:var(--red);font-size:.9rem;margin-top:.5rem;white-space:pre-line}.ok{color:var(--green-d)}
+.map{height:240px;border-radius:10px;border:1px solid var(--line);margin-top:.4rem}
+.bar{height:6px;background:#eee;border-radius:4px;overflow:hidden;margin:.15rem 0 .4rem}.bar i{display:block;height:100%;background:var(--green)}
+.score{font-size:1.3rem;font-weight:800;color:var(--green-d)}
+.hero{text-align:center;padding:2rem 1rem}.hero h1{font-size:2.1rem}.hero p{max-width:620px;margin:.5rem auto;color:var(--mute)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}td,th{padding:.4rem .5rem;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+.bell{position:relative}.bell em{position:absolute;top:-6px;right:-6px;background:var(--amber);color:#fff;border-radius:999px;font-size:.68rem;padding:0 .35rem;font-style:normal}
+.drawer{position:fixed;right:1rem;top:3.6rem;width:340px;max-height:60vh;overflow:auto;background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:.7rem;box-shadow:0 8px 30px #0002;z-index:2000}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">🍽️ SharePlate</span><span class="sp"></span>
+  <span id="nav"></span>
+</header>
+<main id="view"></main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const state = { token: localStorage.getItem('sp_token'), user: null, tab: null, notifs: [], showNotifs: false };
+const KOCHI = [9.9312, 76.2673];
+
+async function api(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (state.token) headers.Authorization = 'Bearer ' + state.token;
+  if (opts.json) { headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
+  const res = await fetch(path, { ...opts, headers });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) {
+    if (res.status === 401 && state.token) { logout(); }
+    throw new Error(fmtErr(data) || res.statusText);
+  }
+  return data;
+}
+function fmtErr(d) {
+  if (!d) return '';
+  const x = d.detail ?? d;
+  if (typeof x === 'string') return x;
+  if (Array.isArray(x)) return x.map(e => typeof e === 'string' ? e : `${(e.loc || []).slice(1).join('.')}: ${e.msg}`).join('\n');
+  return JSON.stringify(x);
+}
+const fmtDT = iso => new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+const hoursLeft = iso => Math.max(0, (new Date(iso) - Date.now()) / 36e5);
+const nowLocal = (offsetH = 0) => { const d = new Date(Date.now() + offsetH * 36e5); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+const iso = v => new Date(v).toISOString();
+const pill = s => `<span class="pill ${esc(s)}">${esc(s)}</span>`;
+
+function logout() { localStorage.removeItem('sp_token'); state.token = null; state.user = null; render(); }
+
+// ---------- map picker ----------
+function picker(id, latId, lngId) {
+  setTimeout(() => {
+    const el = document.getElementById(id); if (!el || !window.L) { if (el) el.innerHTML = '<p class="muted" style="padding:1rem">Map unavailable offline - enter coordinates manually.</p>'; return; }
+    const map = L.map(el).setView(KOCHI, 9);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors', maxZoom: 18 }).addTo(map);
+    let m = null;
+    const set = (lat, lng) => { $('#' + latId).value = lat.toFixed(6); $('#' + lngId).value = lng.toFixed(6); if (m) m.setLatLng([lat, lng]); else m = L.marker([lat, lng]).addTo(map); };
+    map.on('click', e => set(e.latlng.lat, e.latlng.lng));
+  }, 0);
+}
+function useMyLocation(latId, lngId) {
+  navigator.geolocation?.getCurrentPosition(p => { $('#' + latId).value = p.coords.latitude.toFixed(6); $('#' + lngId).value = p.coords.longitude.toFixed(6); });
+}
+function resultMap(id, points) {
+  setTimeout(() => {
+    const el = document.getElementById(id); if (!el || !window.L || !points.length) return;
+    const map = L.map(el); L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+    const b = [];
+    points.forEach(p => { L.marker([p.lat, p.lng]).addTo(map).bindPopup(p.html); b.push([p.lat, p.lng]); });
+    map.fitBounds(b, { padding: [30, 30], maxZoom: 13 });
+  }, 0);
+}
+
+// ---------- shell ----------
+async function boot() {
+  if (state.token) { try { state.user = await api('/api/auth/me'); } catch { state.token = null; } }
+  render();
+}
+async function render() {
+  const nav = $('#nav');
+  if (state.user) {
+    nav.innerHTML = `<span class="bell"><button id="bellbtn">🔔</button><em id="bellc" style="display:none"></em></span>
+      <span style="margin:0 .6rem">${esc(state.user.full_name)} · ${esc(state.user.role)}</span><button id="out">Log out</button>`;
+    $('#out').onclick = logout; $('#bellbtn').onclick = toggleNotifs; loadNotifs();
+    if (state.user.role === 'donor') return donorView();
+    if (state.user.role === 'ngo') return ngoView();
+    return adminView();
+  }
+  nav.innerHTML = '';
+  landing();
+}
+async function loadNotifs() {
+  try { state.notifs = await api('/api/notifications'); } catch { return; }
+  const n = state.notifs.filter(x => !x.is_read).length, c = $('#bellc');
+  if (c) { c.style.display = n ? '' : 'none'; c.textContent = n; }
+}
+async function toggleNotifs() {
+  document.querySelector('.drawer')?.remove();
+  if (state.showNotifs) { state.showNotifs = false; return; }
+  await loadNotifs(); state.showNotifs = true;
+  const d = document.createElement('div'); d.className = 'drawer';
+  d.innerHTML = '<b>Notifications</b>' + (state.notifs.length ? state.notifs.map(n => `<div class="item" style="${n.is_read ? 'opacity:.6' : ''}">${esc(n.message)}<div class="muted">${fmtDT(n.created_at)}</div></div>`).join('') : '<p class="muted">Nothing yet.</p>');
+  document.body.appendChild(d);
+  await api('/api/notifications/read-all', { method: 'POST' }); const c = $('#bellc'); if (c) c.style.display = 'none';
+}
+setInterval(() => { if (state.user) loadNotifs(); }, 20000);
+
+function tabs(names, cur, fn) {
+  return `<div class="tabs">${names.map(([k, l]) => `<button class="${k === cur ? 'on' : ''}" data-t="${k}">${l}</button>`).join('')}</div>`;
+}
+function bindTabs(fn) { document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => fn(b.dataset.t)); }
+
+// ---------- landing / auth ----------
+async function landing() {
+  let imp = { kg_rescued: 0, est_meals: 0, verified_organisations: 0, donations_collected: 0 };
+  try { imp = await api('/api/impact'); } catch {}
+  $('#view').innerHTML = `
+  <div class="hero"><h1>Good food should feed people, not landfills.</h1>
+  <p>SharePlate connects restaurants, hotels, shops and households in Kerala with verified NGOs, and ranks every donation by distance, deadline and capacity so surplus food reaches the right place in time.</p></div>
+  <div class="grid g4" style="margin-bottom:1rem">
+    <div class="card stat"><b>${imp.kg_rescued}</b><span>kg rescued</span></div>
+    <div class="card stat"><b>${imp.est_meals}</b><span>estimated meals</span></div>
+    <div class="card stat"><b>${imp.donations_collected}</b><span>donations collected</span></div>
+    <div class="card stat"><b>${imp.verified_organisations}</b><span>verified organisations</span></div></div>
+  <div class="grid g2">
+    <div class="card"><h2>Log in</h2><form id="lf"><label>Email</label><input id="le" type="email" required>
+      <label>Password</label><input id="lp" type="password" required><p class="err" id="lerr"></p><button class="btn">Log in</button></form></div>
+    <div class="card"><h2>Create an account</h2><form id="rf">
+      <div class="row"><div><label>I am a</label><select id="rr"><option value="donor">Food donor</option><option value="ngo">NGO / charity</option></select></div>
+      <div><label>Full name</label><input id="rn" required></div></div>
+      <div class="row"><div><label>Email</label><input id="re" type="email" required></div><div><label>Phone</label><input id="rph"></div></div>
+      <label>Password (8+ characters)</label><input id="rp" type="password" minlength="8" required>
+      <div id="ngofields" style="display:none">
+        <div class="row"><div><label>Organisation name</label><input id="on"></div><div><label>Registration no.</label><input id="orn"></div></div>
+        <div class="row"><div><label>Address</label><input id="oa"></div><div><label>District</label><input id="od"></div></div>
+        <div class="row"><div><label>Capacity (kg)</label><input id="oc" type="number" min="1" step="any"></div><div><label>Excluded allergens (comma separated)</label><input id="oal" placeholder="peanuts, shellfish"></div></div>
+        <label><input id="ov" type="checkbox" style="width:auto"> Accept vegetarian food only</label>
+        <label>Location (click map)</label><div id="m1" class="map"></div>
+        <div class="row"><input id="olat" placeholder="Latitude"><input id="olng" placeholder="Longitude"></div></div>
+      <p class="err" id="rerr"></p><button class="btn">Register</button></form></div></div>`;
+  picker('m1', 'olat', 'olng');
+  $('#rr').onchange = e => { $('#ngofields').style.display = e.target.value === 'ngo' ? '' : 'none'; setTimeout(() => window.dispatchEvent(new Event('resize')), 50); };
+  $('#lf').onsubmit = async e => {
+    e.preventDefault();
+    try {
+      const body = new URLSearchParams({ username: $('#le').value, password: $('#lp').value });
+      const r = await api('/api/auth/login', { method: 'POST', body });
+      state.token = r.access_token; localStorage.setItem('sp_token', r.access_token); boot();
+    } catch (err) { $('#lerr').textContent = err.message; }
+  };
+  $('#rf').onsubmit = async e => {
+    e.preventDefault();
+    const role = $('#rr').value;
+    const body = { email: $('#re').value, password: $('#rp').value, full_name: $('#rn').value, phone: $('#rph').value || null, role };
+    if (role === 'ngo') body.ngo = { org_name: $('#on').value, registration_no: $('#orn').value, address: $('#oa').value, district: $('#od').value,
+      latitude: parseFloat($('#olat').value), longitude: parseFloat($('#olng').value), capacity_kg: parseFloat($('#oc').value),
+      veg_only: $('#ov').checked, excluded_allergens: $('#oal').value.split(',') };
+    try {
+      await api('/api/auth/register', { method: 'POST', json: body });
+      const r = await api('/api/auth/login', { method: 'POST', body: new URLSearchParams({ username: body.email, password: body.password }) });
+      state.token = r.access_token; localStorage.setItem('sp_token', r.access_token); boot();
+    } catch (err) { $('#rerr').textContent = err.message; }
+  };
+}
+
+// ---------- donor ----------
+async function donorView(tab = 'new') {
+  state.tab = tab;
+  const opts = await api('/api/donations/options');
+  const v = $('#view');
+  v.innerHTML = tabs([['new', 'Post food'], ['mine', 'My donations']], tab);
+  bindTabs(donorView);
+  if (tab === 'new') {
+    const sel = a => a.map(x => `<option value="${x}">${x.replace('_', ' ')}</option>`).join('');
+    v.innerHTML += `<div class="card"><h2>Post surplus food</h2><form id="df">
+      <div class="row"><div><label>Title</label><input id="dt" required placeholder="e.g. Vegetable biryani, 40 portions"></div>
+      <div><label>Quantity (kg)</label><input id="dq" type="number" min="0.1" step="any" required></div></div>
+      <div class="row"><div><label>Food type</label><select id="dft">${sel(opts.food_types)}</select></div>
+      <div><label>Storage</label><select id="dst">${sel(opts.storage_types)}</select></div></div>
+      <div class="row"><div><label>Prepared at</label><input id="dp" type="datetime-local" value="${nowLocal(-1)}" required></div>
+      <div><label>Eat / collect by</label><input id="de" type="datetime-local" value="${nowLocal(3)}" required></div></div>
+      <div class="row"><div><label>Allergens (comma separated)</label><input id="da" placeholder="nuts, dairy, gluten"></div>
+      <div><label>&nbsp;</label><label style="margin:0"><input id="dv" type="checkbox" checked style="width:auto"> Vegetarian</label></div></div>
+      <div class="row"><div><label>Pickup address</label><input id="dad" required></div><div><label>District</label><input id="ddi" required></div></div>
+      <label>Pickup location (click map) <a href="#" id="loc">use my location</a></label><div id="m2" class="map"></div>
+      <div class="row"><input id="dlat" placeholder="Latitude" required><input id="dlng" placeholder="Longitude" required></div>
+      <label>Notes</label><textarea id="dn" rows="2"></textarea>
+      <p class="err" id="derr"></p><button class="btn">Publish donation</button></form></div>`;
+    picker('m2', 'dlat', 'dlng');
+    $('#loc').onclick = e => { e.preventDefault(); useMyLocation('dlat', 'dlng'); };
+    $('#df').onsubmit = async e => {
+      e.preventDefault();
+      try {
+        await api('/api/donations', { method: 'POST', json: {
+          title: $('#dt').value, food_type: $('#dft').value, quantity_kg: parseFloat($('#dq').value), prepared_at: iso($('#dp').value),
+          expires_at: iso($('#de').value), storage: $('#dst').value, allergens: $('#da').value.split(','), is_veg: $('#dv').checked,
+          address: $('#dad').value, district: $('#ddi').value, latitude: parseFloat($('#dlat').value), longitude: parseFloat($('#dlng').value),
+          notes: $('#dn').value || null } });
+        donorView('mine');
+      } catch (err) { $('#derr').textContent = err.message; }
+    };
+  } else {
+    const list = await api('/api/donations/mine');
+    v.innerHTML += `<div class="card"><h2>My donations</h2>${list.length ? list.map(d => `<div class="item">
+      <b>${esc(d.title)}</b> ${pill(d.status)} <span class="muted">· ${d.quantity_kg} kg · ${esc(d.food_type.replace('_', ' '))}</span>
+      <div class="muted">Deadline ${fmtDT(d.expires_at)} · ${esc(d.address)}</div>
+      ${['AVAILABLE', 'CLAIMED'].includes(d.status) ? `<button class="btn sec sm" data-c="${d.id}">Cancel</button>` : ''}</div>`).join('') : '<p class="muted">You have not posted anything yet.</p>'}</div>`;
+    document.querySelectorAll('[data-c]').forEach(b => b.onclick = async () => {
+      if (!confirm('Cancel this donation?')) return;
+      try { await api(`/api/donations/${b.dataset.c}/cancel`, { method: 'POST' }); donorView('mine'); } catch (e) { alert(e.message); }
+    });
+  }
+}
+
+// ---------- NGO ----------
+async function ngoView(tab = 'matches') {
+  state.tab = tab;
+  const v = $('#view');
+  const prof = await api('/api/ngo/profile');
+  v.innerHTML = tabs([['matches', 'Matches'], ['claims', 'My claims'], ['prefs', 'Organisation']], tab);
+  bindTabs(ngoView);
+  if (prof.status !== 'VERIFIED' && tab !== 'prefs') {
+    v.innerHTML += `<div class="card"><h2>${esc(prof.org_name)} ${pill(prof.status)}</h2><p>${prof.status === 'PENDING'
+      ? 'Your organisation is waiting for administrator verification. You will be notified once it is approved.'
+      : 'Your organisation was not approved.' + (prof.review_note ? ' Note: ' + esc(prof.review_note) : '')}</p></div>`;
+    return;
+  }
+  if (tab === 'matches') {
+    const [ms, cap] = await Promise.all([api('/api/ngo/matches'), api('/api/ngo/capacity')]);
+    v.innerHTML += `<div class="card muted">Remaining capacity: <b>${cap.remaining_kg.toFixed(1)} kg</b> of ${cap.capacity_kg} kg (${cap.claimed_kg.toFixed(1)} kg claimed, awaiting pickup)</div>
+      ${ms.length ? '<div class="card"><div id="m3" class="map" style="height:280px"></div></div>' : ''}
+      <div class="card"><h2>Best matches for you</h2>${ms.length ? ms.map(m => { const d = m.donation; return `<div class="item"><div class="row" style="align-items:start">
+        <div style="flex:3"><b>${esc(d.title)}</b> <span class="muted">· ${d.quantity_kg} kg · ${esc(d.food_type.replace('_', ' '))} · ${d.is_veg ? 'veg' : 'non-veg'}</span>
+        <div class="muted">${esc(d.address)}, ${esc(d.district)}</div>
+        <div class="muted">${m.distance_km} km away (~${Math.round(m.travel_minutes)} min) · ${m.hours_left.toFixed(1)} h left${d.allergens.length ? ' · allergens: ' + esc(d.allergens.join(', ')) : ''}</div>
+        <div style="max-width:320px;margin-top:.3rem">${['distance', 'urgency', 'capacity'].map(k => `<div class="muted">${k} <div class="bar"><i style="width:${Math.round(m.breakdown[k] * 100)}%"></i></div></div>`).join('')}</div></div>
+        <div style="flex:1;text-align:right"><div class="score">${Math.round(m.score * 100)}</div><div class="muted">match score</div>
+        <button class="btn sm" data-claim="${d.id}" style="margin-top:.4rem">Claim</button></div></div></div>`; }).join('') : '<p class="muted">No available donations match your location, capacity and food preferences right now.</p>'}<p class="err" id="cerr"></p></div>`;
+    resultMap('m3', ms.map(m => ({ lat: m.donation.latitude, lng: m.donation.longitude, html: `<b>${esc(m.donation.title)}</b><br>${m.donation.quantity_kg} kg` })));
+    document.querySelectorAll('[data-claim]').forEach(b => b.onclick = async () => {
+      try { await api(`/api/ngo/donations/${b.dataset.claim}/claim`, { method: 'POST' }); ngoView('claims'); }
+      catch (e) { alert(e.message); ngoView('matches'); }
+    });
+  } else if (tab === 'claims') {
+    const list = await api('/api/ngo/claims');
+    v.innerHTML += `<div class="card"><h2>My claims</h2>${list.length ? list.map(d => `<div class="item"><b>${esc(d.title)}</b> ${pill(d.status)}
+      <span class="muted">· ${d.quantity_kg} kg</span><div class="muted">${esc(d.address)} · collect by ${fmtDT(d.expires_at)}</div>
+      ${d.status === 'CLAIMED' ? `<button class="btn sm" data-col="${d.id}">Mark collected</button> <button class="btn sec sm" data-rel="${d.id}">Release</button>
+      <a class="muted" target="_blank" rel="noopener" href="https://www.openstreetmap.org/directions?to=${d.latitude}%2C${d.longitude}">directions</a>` : ''}</div>`).join('') : '<p class="muted">No claims yet.</p>'}</div>`;
+    const act = (attr, path) => document.querySelectorAll(`[${attr}]`).forEach(b => b.onclick = async () => {
+      try { await api(`/api/ngo/donations/${b.getAttribute(attr)}/${path}`, { method: 'POST' }); ngoView('claims'); } catch (e) { alert(e.message); }
+    });
+    act('data-col', 'collect'); act('data-rel', 'release');
+  } else {
+    v.innerHTML += `<div class="card"><h2>${esc(prof.org_name)} ${pill(prof.status)}</h2><p class="muted">${esc(prof.address)}, ${esc(prof.district)} · reg. ${esc(prof.registration_no)}</p>
+      <form id="pf"><div class="row"><div><label>Capacity (kg)</label><input id="pc" type="number" min="1" step="any" value="${prof.capacity_kg}"></div>
+      <div><label>Excluded allergens</label><input id="pa" value="${esc(prof.excluded_allergens.join(', '))}"></div></div>
+      <label><input id="pv" type="checkbox" style="width:auto" ${prof.veg_only ? 'checked' : ''}> Vegetarian only</label>
+      <p class="err" id="perr"></p><button class="btn">Save preferences</button></form></div>`;
+    $('#pf').onsubmit = async e => {
+      e.preventDefault();
+      try { await api('/api/ngo/profile', { method: 'PUT', json: { capacity_kg: parseFloat($('#pc').value), veg_only: $('#pv').checked, excluded_allergens: $('#pa').value.split(',') } });
+        $('#perr').className = 'ok'; $('#perr').textContent = 'Saved.'; } catch (err) { $('#perr').textContent = err.message; }
+    };
+  }
+}
+
+// ---------- admin ----------
+async function adminView(tab = 'overview') {
+  state.tab = tab;
+  const v = $('#view');
+  v.innerHTML = tabs([['overview', 'Overview'], ['ngos', 'Organisations'], ['donations', 'Donations'], ['users', 'Users'], ['audit', 'Audit log']], tab);
+  bindTabs(adminView);
+  if (tab === 'overview') {
+    const s = await api('/api/admin/stats');
+    const st = s.donations_by_status;
+    v.innerHTML += `<div class="grid g4"><div class="card stat"><b>${s.kg_collected}</b><span>kg collected</span></div>
+      <div class="card stat"><b>${s.est_meals_served}</b><span>est. meals (at 0.4 kg/meal)</span></div>
+      <div class="card stat"><b>${s.kg_expired_uncollected}</b><span>kg expired uncollected</span></div>
+      <div class="card stat"><b>${(s.ngos_by_status.PENDING || 0)}</b><span>organisations pending</span></div></div>
+      <div class="card"><h3>Donations by status</h3>${Object.keys(st).length ? Object.entries(st).map(([k, n]) => `${pill(k)} ${n} &nbsp;`).join('') : '<span class="muted">none yet</span>'}</div>`;
+  } else if (tab === 'ngos') {
+    const list = await api('/api/admin/ngos');
+    v.innerHTML += `<div class="card"><h2>Organisations</h2>${list.map(n => `<div class="item"><b>${esc(n.org_name)}</b> ${pill(n.status)}
+      <div class="muted">Reg. ${esc(n.registration_no)} · ${esc(n.address)}, ${esc(n.district)} · capacity ${n.capacity_kg} kg</div>
+      ${n.review_note ? `<div class="muted">Note: ${esc(n.review_note)}</div>` : ''}
+      ${n.status !== 'VERIFIED' ? `<button class="btn sm" data-v="${n.id}">Verify</button>` : ''}
+      ${n.status !== 'REJECTED' ? `<button class="btn red sm" data-r="${n.id}">Reject</button>` : ''}</div>`).join('') || '<p class="muted">None yet.</p>'}</div>`;
+    const rev = (attr, decision) => document.querySelectorAll(`[${attr}]`).forEach(b => b.onclick = async () => {
+      const note = prompt('Optional note for the organisation:') ?? null;
+      try { await api(`/api/admin/ngos/${b.getAttribute(attr)}/review`, { method: 'POST', json: { decision, note: note || null } }); adminView('ngos'); } catch (e) { alert(e.message); }
+    });
+    rev('data-v', 'verify'); rev('data-r', 'reject');
+  } else if (tab === 'donations') {
+    const list = await api('/api/admin/donations');
+    v.innerHTML += `<div class="card"><h2>All donations</h2><table><tr><th>#</th><th>Title</th><th>kg</th><th>Status</th><th>Deadline</th><th>District</th></tr>
+      ${list.map(d => `<tr><td>${d.id}</td><td>${esc(d.title)}</td><td>${d.quantity_kg}</td><td>${pill(d.status)}</td><td>${fmtDT(d.expires_at)}</td><td>${esc(d.district)}</td></tr>`).join('')}</table></div>`;
+  } else if (tab === 'users') {
+    const list = await api('/api/admin/users');
+    v.innerHTML += `<div class="card"><h2>Users</h2><table><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th></th></tr>
+      ${list.map(u => `<tr><td>${esc(u.full_name)}</td><td>${esc(u.email)}</td><td>${esc(u.role)}</td><td>${u.is_active ? 'yes' : 'no'}</td>
+      <td>${u.id !== state.user.id ? `<button class="btn sec sm" data-u="${u.id}" data-a="${u.is_active ? 0 : 1}">${u.is_active ? 'Deactivate' : 'Activate'}</button>` : ''}</td></tr>`).join('')}</table></div>`;
+    document.querySelectorAll('[data-u]').forEach(b => b.onclick = async () => {
+      try { await api(`/api/admin/users/${b.dataset.u}/active`, { method: 'POST', json: { is_active: b.dataset.a === '1' } }); adminView('users'); } catch (e) { alert(e.message); }
+    });
+  } else {
+    const list = await api('/api/admin/audit');
+    v.innerHTML += `<div class="card"><h2>Audit log</h2><table><tr><th>When</th><th>Actor</th><th>Action</th><th>Entity</th><th>Detail</th></tr>
+      ${list.map(a => `<tr><td>${fmtDT(a.created_at)}</td><td>${a.actor_id ?? 'system'}</td><td>${esc(a.action)}</td><td>${esc(a.entity)} #${a.entity_id ?? ''}</td><td class="muted">${esc(JSON.stringify(a.detail))}</td></tr>`).join('')}</table></div>`;
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
